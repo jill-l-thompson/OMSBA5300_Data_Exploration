@@ -3,6 +3,7 @@
 library(tidyverse)
 library(purrr)
 library(lubridate)
+library(fixest)
 
 #Create vector of file names for trend files
 trend_files <- list.files('Data/Google_Trends', 
@@ -21,13 +22,19 @@ name_data <-
 #Format dates in trend data
 trend_data <- trend_data %>%
   mutate(date = ymd(str_sub(monthorweek, 1, 10))) %>% 
-  mutate(month = floor_date(date, unit = 'month'))
+  mutate(month = floor_date(date, unit = 'month')) %>% 
+  select(-'monthorweek', -'date')
+
+#Remove lines without dates
+trend_data <- trend_data %>% 
+  na.omit('month')
 
 #Standardize index variable in trend data
 trend_data <- trend_data %>% 
   group_by(schname, keyword) %>% 
   mutate(mean_index = mean(index), stdDev_index = sd(index), std_index = 
-           (index - mean_index) / stdDev_index)
+           (index - mean_index) / stdDev_index) %>% 
+  select(-'index', -'mean_index', -'stdDev_index')
 
 #Remove duplicate schools from name data
 name_data <- name_data %>%
@@ -44,4 +51,36 @@ df1 <- df1 %>%
   inner_join(score_data, by = 'UNITID')
 
 rm(name_data, score_data, trend_data, trend_files)
+
+#Filter for only bachelor-degree institutions
+df1 <- df1 %>% 
+  filter(PREDDEG == 3)
+
+#Filter for colleges w/earnings data
+df1 <- df1 %>% 
+  filter(`md_earn_wne_p10-REPORTED-EARNINGS` != 'NULL',
+         `md_earn_wne_p10-REPORTED-EARNINGS` != 'PrivacySuppressed')
+
+#Format median earning to numeric data
+df1 <- df1 %>% 
+  mutate(med_earn = as.numeric(`md_earn_wne_p10-REPORTED-EARNINGS`))
+
+#Add binary variable to indicate whether scorecard is available
+df1 <- df1 %>% 
+  mutate(SC_avail =  ifelse(month >= '2015-09-01', 1, 0))
+
+#Add binary variable for high v low income
+df1 <- df1 %>%
+  mutate(high_earn = ifelse(med_earn > 70000, 1, 0))
+
+#Create variable to convert months into quarters
+df1 <- df1 %>% 
+  mutate(month_only = lubridate::month(month)) %>% 
+  mutate(quarter = ifelse(month_only <= 3, 1,
+                          ifelse(month_only <= 6, 2,
+                                 ifelse(month_only <= 9, 3,
+                                        ifelse(month_only <= 12, 4)))))
+
+
+
 
