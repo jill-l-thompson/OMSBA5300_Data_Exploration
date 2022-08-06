@@ -19,14 +19,11 @@ score_data <-
 name_data <-
   read_csv('Data/id_name_link.csv')
 
-#Format dates in trend data
+#Format dates in trend data and remove lines without dates
 trend_data <- trend_data %>%
   mutate(date = ymd(str_sub(monthorweek, 1, 10))) %>% 
   mutate(month = floor_date(date, unit = 'month')) %>% 
-  select(-'monthorweek', -'date')
-
-#Remove lines without dates
-trend_data <- trend_data %>% 
+  select(-'monthorweek', -'date') %>% 
   na.omit('month')
 
 #Standardize index variable in trend data
@@ -52,12 +49,9 @@ df1 <- df1 %>%
 
 rm(name_data, score_data, trend_data, trend_files)
 
-#Filter for only bachelor-degree institutions
+#Filter for only bachelor-degree institutions and colleges with earnings data
 df1 <- df1 %>% 
-  filter(PREDDEG == 3)
-
-#Filter for colleges w/earnings data
-df1 <- df1 %>% 
+  filter(PREDDEG == 3) %>% 
   filter(`md_earn_wne_p10-REPORTED-EARNINGS` != 'NULL',
          `md_earn_wne_p10-REPORTED-EARNINGS` != 'PrivacySuppressed')
 
@@ -69,9 +63,13 @@ df1 <- df1 %>%
 df1 <- df1 %>% 
   mutate(SC_avail =  ifelse(month >= '2015-09-01', 1, 0))
 
-#Add binary variable for high v low income
+#Add binary variable for high v low income, filter for just low and high income
 df1 <- df1 %>%
-  mutate(high_earn = ifelse(med_earn > 70000, 1, 0))
+  mutate(high_earn = ifelse(med_earn > 75000, 1, 0)) %>% 
+  mutate(for_filter = ifelse(between(med_earn, 30000, 75000),
+                             'd', 'k')) %>% 
+  filter(for_filter == 'k') %>% 
+  select(-'for_filter')
 
 #Create variable to convert months into quarters
 df1 <- df1 %>% 
@@ -80,7 +78,6 @@ df1 <- df1 %>%
                           ifelse(month_only <= 6, 2,
                                  ifelse(month_only <= 9, 3,
                                         ifelse(month_only <= 12, 4)))))
-
 
 
 
