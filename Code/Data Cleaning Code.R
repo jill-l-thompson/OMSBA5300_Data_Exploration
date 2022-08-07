@@ -23,7 +23,7 @@ name_data <-
 trend_data <- trend_data %>%
   mutate(date = ymd(str_sub(monthorweek, 1, 10))) %>% 
   mutate(month = floor_date(date, unit = 'month')) %>% 
-  select(-'monthorweek', -'date') %>% 
+  select(-'date') %>% 
   na.omit('month')
 
 #Standardize index variable in trend data
@@ -70,14 +70,3 @@ df1 <- df1 %>%
                              'd', 'k')) %>% 
   filter(for_filter == 'k') %>% 
   select(-'for_filter')
-
-#Create variable to convert months into quarters
-df1 <- df1 %>% 
-  mutate(month_only = lubridate::month(month)) %>% 
-  mutate(quarter = ifelse(month_only <= 3, 1,
-                          ifelse(month_only <= 6, 2,
-                                 ifelse(month_only <= 9, 3,
-                                        ifelse(month_only <= 12, 4)))))
-
-
-

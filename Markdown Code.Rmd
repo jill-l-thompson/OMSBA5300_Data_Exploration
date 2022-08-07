@@ -1,0 +1,174 @@
+---
+title: "Data Exploration Project"
+author: "Jill Thompson"
+date: '2022-08-06'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Research question:  The College Scorecard was released at the start of September 2015. Among colleges that predominantly grant bachelor’s degrees, did the release of the Scorecard shift student interest to high-earnings colleges relative to low-earnings ones (as proxied by Google searches for keywords associated with those colleges)?
+
+## To answer this question, I'll need to clean the available data and then run regression analysis.
+
+## First, I load the libraries I'll need for both data cleaning and regression analysis.
+
+```{r}
+library(tidyverse)
+library(purrr)
+library(lubridate)
+library(fixest)
+```
+## Next, I load all of the data files I need (Google Trends, College Scorecard, and the name ID file that allows me to match up college data in the other two files).
+
+```{r}
+trend_files <- list.files('Data/Google_Trends', 
+                          full.names = TRUE)
+
+trend_data <- trend_files %>% map_df(read_csv)
+
+score_data <- 
+  read_csv('Data/Most+Recent+Cohorts+(Scorecard+Elements).csv')
+
+name_data <-
+  read_csv('Data/id_name_link.csv')
+
+```
+## Next, I format the date data so that I can organize it by month rather than week. I also remove any lines that do not have date data, as this data is not useful to me.
+
+```{r}
+trend_data <- trend_data %>%
+  mutate(date = ymd(str_sub(monthorweek, 1, 10))) %>% 
+  mutate(month = floor_date(date, unit = 'month')) %>% 
+  select(-'monthorweek', -'date') %>% 
+  na.omit('month')
+```
+## Next, I standardize the index variable on Google search trends so that the variable is comparable between colleges.
+
+```{r}
+trend_data <- trend_data %>% 
+  group_by(schname, keyword) %>% 
+  mutate(mean_index = mean(index), stdDev_index = sd(index), std_index = 
+           (index - mean_index) / stdDev_index) %>% 
+  select(-'index', -'mean_index', -'stdDev_index')
+```
+## Next, I remove duplicates from the school name data.
+
+```{r}
+name_data <- name_data %>%
+  group_by(schname) %>% 
+  mutate(n = n()) %>% 
+  filter(n == 1)
+```
+## Now it is time to merge the data from all three data sets. Once they are all in a single data frame, I remove the individual data files.
+
+```{r}
+df1 <- trend_data %>% 
+  inner_join(name_data, by = 'schname') %>% 
+  rename(UNITID = unitid)
+
+df1 <- df1 %>% 
+  inner_join(score_data, by = 'UNITID')
+
+rm(name_data, score_data, trend_data, trend_files)
+```
+
+## I filter for only institutions that primarily grant bachelor's degrees, as per the research question. I also filter out any colleges that do not share student earnings data, as this is not useful to me.
+
+```{r}
+df1 <- df1 %>% 
+  filter(PREDDEG == 3) %>% 
+  filter(`md_earn_wne_p10-REPORTED-EARNINGS` != 'NULL',
+         `md_earn_wne_p10-REPORTED-EARNINGS` != 'PrivacySuppressed')
+```
+## Next, I format the student earnings data to a numeric format.
+
+```{r}
+df1 <- df1 %>% 
+  mutate(med_earn = as.numeric(`md_earn_wne_p10-REPORTED-EARNINGS`))
+```
+## I add two binary variables for my analysis. The first one, SC_avail, indicates whether scorecard data was available at the time period in question. Any data from on or after September 1, 2015, is assigned a 1 as that data existed when scorecard data was available. Any data before that time period is assigned a 0.
+
+## Similarly, I add a binary variable for high_income, with a 1 indicating high income and a 0 indicating low income. I mirrored the income categories in the College Scorecard data to determine income threshholds. An income over $75K is considered high income and an income less than $30K is considered low income.
+
+## I also add a filter to remove middle income data points, as they are not relevant to my research. I am comparing effects of high-income vs low-income.
+
+```{r}
+df1 <- df1 %>% 
+  mutate(SC_avail =  ifelse(month >= '2015-09-01', 1, 0))
+
+df1 <- df1 %>%
+  mutate(high_earn = ifelse(med_earn > 75000, 1, 0)) %>% 
+  mutate(for_filter = ifelse(between(med_earn, 30000, 75000),
+                             'd', 'k')) %>% 
+  filter(for_filter == 'k') %>% 
+  select(-'for_filter')
+```
+
+## I have all of the data I want now, but I'm going to take an additional step to group the data by school and month and keep only the variables that I may want to use in my regression. 
+
+```{r}
+df2 <- df1 %>%
+  group_by(schname, month) %>%
+  mutate(std_index = mean(std_index)) %>%
+  select(-'keyword', -'schid', -'keynum') %>% 
+  distinct(.keep_all = TRUE) %>% 
+  select(schname, month, std_index, SC_avail, high_earn)
+```
+
+## Now it is time to start the regression analysis. Based on the research question and the fact that I want to look at the effect of the College Scorecard on schools with high-income alumni vs low-income alumni, I'm going to try a regression with interaction terms, along with an interaction plot to visualize the data.
+
+## At a 0.1% degree of significance, I can say that the existence of the scorecard decreases a school's Google search index by .2589 points.
+
+## The effect of the existence of the scorecard increases Google search index by .0625 points more for schools with high-earning alumni than for schools with low-earning alumni. (In other words, a high-earning school with scorecard data can expect a Google search index reduction of .1964 on average.)
+
+## The interaction plot illustrates this by mapping the effect of scorecard availability and earnings on Google index scores. This shows that the relationship between scores and the availability of scorecard data does change based on whether or not a college has high or low-earning students.
+
+```{r}
+reg1 <- df2 %>% 
+  feols(std_index ~ SC_avail + high_earn + I(SC_avail*high_earn))
+
+etable(reg1)
+
+interaction.plot(x.factor = df2$SC_avail, trace.factor = df2$high_earn,
+                 response = df2$std_index, xlab = 'Scorecard Available', ylab = 'Google score',
+                 trace.label = 'High Earning')
+```
+
+## I'm going to run another regression with a control for month. Given the cyclic nature of the academic year, I'm going to guess that controlling for month of year may be meaningful.
+
+```{r}
+
+reg2 <- df2 %>% 
+  feols(std_index ~ SC_avail + high_earn + I(SC_avail*high_earn)
+        + month)
+
+etable(reg2)
+```
+
+
+## Next, I'm going to use a wald test on my month coefficient, as well as plot month against std_index.
+
+## In reg2, the  p-value of the wald test indicates that we cannot reject the null hypothesis that the month coefficient is zero. Therefore, this model predicts significantly better with month included as a control, at a 0.1% significance level.
+
+## The graph demonstrates this relationship - you can see variation in each month, with similar data for the same month in different years. This supports our choice to use month as a control.
+
+## Therefore, I am going to choose reg2 as my regression model.
+
+```{r}
+wald(reg2, c('month'))
+
+df2 %>% ggplot(aes(month, std_index)) + geom_point()
+```
+
+
+
+## Interpretation:  At a 0.1% degree of confidence, we can say that the existence of the scorecard increases a school's Google search index score by .0926 points when controlling for month.
+
+## The effect of the existence of the scorecard increases Google search index scores by .0631 points more for schools with high-earning alumni than for schools with low-earning alumni, when controlling for month.
+
+## In plain terms, this means the answer to the research question is:  Yes, among colleges that predominantly grant bachelor’s degrees, the release of the Scorecard shifted student interest to high-earnings colleges relative to low-earnings ones, as proxied by Google searches for keywords associated with those colleges.  
+
+
